@@ -122,9 +122,9 @@ def get_candles(resolution):
 
     end = int(time.time())
 
-    minutes = {"5m": 5, "15m": 15, "1h": 60}[resolution]
+    minutes = {"5m": 5, "15m": 15, "1h": 60}
 
-    start = end - minutes * 100 * 60
+    start = end - minutes[resolution] * 100 * 60
 
     response = requests.get(
 
@@ -154,7 +154,7 @@ def get_candles(resolution):
 
         raise ValueError("Delta candle API returned an error")
 
-         candles = data["result"]
+    candles=data["result"]
     candles = sorted(candles, key=lambda c: int(c["time"]))
     return candles
 
