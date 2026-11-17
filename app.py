@@ -176,7 +176,10 @@ def get_trend(candles):
 
     fast = ema(closes, 9)
     slow = ema(closes, 21)
-
+    macd_line = ema(closes, 12) - ema(closes, 26)
+    macd_values = [ema(closes[:i+1], 12) - ema(closes[:i+1], 26) for i in range(len(closes))]
+    signal_line = ema(macd_values, 9)
+    macd_histogram = macd_values[-1] - signal_line 
     changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
     gains = [max(change, 0) for change in changes]
     losses = [max(-change, 0) for change in changes]
@@ -190,10 +193,10 @@ def get_trend(candles):
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
 
-    if fast > slow and rsi < 70:
+    if fast > slow and rsi < 70 and macd_histogram > 0:
         return "Bullish"
 
-    if fast < slow and rsi > 30:
+    if fast < slow and rsi > 30 and macd_histogram < 0:
         return "Bearish"
 
     return "Neutral"
