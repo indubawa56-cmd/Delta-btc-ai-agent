@@ -163,35 +163,40 @@ def get_trend(candles):
     closes = [float(c["close"]) for c in candles]
 
     if len(closes) < 21:
-
         return "Insufficient data"
 
     def ema(values, period):
-
         alpha = 2 / (period + 1)
-
         value = values[0]
 
         for x in values[1:]:
-
             value = alpha * x + (1-alpha) * value
 
         return value
 
     fast = ema(closes, 9)
-
     slow = ema(closes, 21)
 
-    if fast > slow:
+    changes = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+    gains = [max(change, 0) for change in changes]
+    losses = [max(-change, 0) for change in changes]
 
+    avg_gain = sum(gains[-14:]) / 14
+    avg_loss = sum(losses[-14:]) / 14
+
+    if avg_loss == 0:
+        rsi = 100 if avg_gain > 0 else 50
+    else:
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+
+    if fast > slow and rsi < 70:
         return "Bullish"
 
-    if fast < slow:
-
+    if fast < slow and rsi > 30:
         return "Bearish"
 
     return "Neutral"
-
 @app.route("/")
 
 def home():
