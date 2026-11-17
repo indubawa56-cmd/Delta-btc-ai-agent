@@ -154,9 +154,9 @@ def get_candles(resolution):
 
         raise ValueError("Delta candle API returned an error")
 
-       candles = data["result"]
-candles = sorted(candles, key=lambda c: int(c["time"]))
-return candles
+         candles = data["result"]
+    candles = sorted(candles, key=lambda c: int(c["time"]))
+    return candles
 
 def get_trend(candles):
 
