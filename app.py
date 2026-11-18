@@ -510,15 +510,29 @@ def market():
     except Exception as e:
 
         return jsonify(error=str(e)), 502
-# PAPER TRADING SYSTEM
 PAPER = {
     "cash": 5000.0,
     "btc": 0.0,
     "entry_price": 0.0,
     "stop_loss": 0.0,
-    "trades": []
+    "trades": [],
+    "daily_loss": 0.0,
+    "daily_loss_limit": 100.0,
+    "daily_date": "",
+    "daily_locked": False
 }
+def check_daily_loss():
+    today = datetime.now().date().isoformat()
 
+    if PAPER["daily_date"] != today:
+        PAPER["daily_date"] = today
+        PAPER["daily_loss"] = 0.0
+        PAPER["daily_locked"] = False
+
+    if PAPER["daily_loss"] >= PAPER["daily_loss_limit"]:
+        PAPER["daily_locked"] = True
+
+    return PAPER["daily_locked"]
 AUTO = {
     "enabled": False,
     "last_action": "HOLD",
@@ -552,13 +566,20 @@ def paper_trade():
         return jsonify(error="Invalid price or quantity"), 400
 
     if side not in ("buy", "sell"):
-        return jsonify(error="Invalid trade type"), 400
+        return jsonify(error="Invalid trade type"), 400 
 
     if price <= 0 or quantity <= 0:
         return jsonify(error="Invalid price or quantity"), 400
 
     with PAPER_LOCK:
+        check_daily_loss()
         if side == "buy":
+
+            if check_daily_loss():
+                return jsonify(
+                    error="Daily loss limit reached. New BUY blocked."
+                ), 403
+
             cost = price * quantity
 
             if PAPER["btc"] > 0:
@@ -579,6 +600,16 @@ def paper_trade():
             if quantity > PAPER["btc"]:
                 return jsonify(error="Insufficient BTC"), 400
 
+            realized_loss = (
+                PAPER["entry_price"] - price
+            ) * quantity
+
+            if realized_loss > 0:
+                PAPER["daily_loss"] += realized_loss
+
+            if PAPER["daily_loss"] >= PAPER["daily_loss_limit"]:
+                PAPER["daily_locked"] = True
+
             PAPER["cash"] += price * quantity
             PAPER["btc"] -= quantity
 
@@ -598,6 +629,8 @@ def paper_trade():
             btc=PAPER["btc"],
             entry_price=PAPER["entry_price"],
             stop_loss=PAPER["stop_loss"],
+            daily_loss=PAPER["daily_loss"],
+            daily_locked=PAPER["daily_locked"],
             trades=PAPER["trades"]
         )
 
@@ -634,7 +667,7 @@ def auto_tick():
             if price_usd <= 0:
                 raise ValueError("Invalid BTC price")
 
-            price = price_usd * get_usd_inr()
+                        price = price_usd * get_usd_inr()
 
             candles_5m = get_candles("5m")
             candles_15m = get_candles("15m")
@@ -645,7 +678,9 @@ def auto_tick():
             action = "HOLD"
 
             with PAPER_LOCK:
+                check_daily_loss()
 
+                # First: decide the action
                 if PAPER["btc"] > 0 and price <= PAPER["stop_loss"]:
                     action = "SELL"
 
@@ -660,9 +695,11 @@ def auto_tick():
                     trend_5m == "Bullish"
                     and trend_15m == "Bullish"
                     and PAPER["btc"] == 0
+                    and not PAPER["daily_locked"]
                 ):
                     action = "BUY"
 
+                # Second: execute the paper trade
                 if action == "BUY":
                     cost = min(500.0, PAPER["cash"])
 
@@ -686,6 +723,16 @@ def auto_tick():
                     quantity = PAPER["btc"]
 
                     if quantity > 0:
+                        realized_loss = (
+                            PAPER["entry_price"] - price
+                        ) * quantity
+
+                        if realized_loss > 0:
+                            PAPER["daily_loss"] += realized_loss
+
+                        if PAPER["daily_loss"] >= PAPER["daily_loss_limit"]:
+                            PAPER["daily_locked"] = True
+
                         PAPER["cash"] += price * quantity
                         PAPER["btc"] = 0.0
                         PAPER["entry_price"] = 0.0
@@ -699,7 +746,6 @@ def auto_tick():
 
                 cash = PAPER["cash"]
                 btc = PAPER["btc"]
-
             AUTO["last_action"] = action
             AUTO["last_check"] = datetime.now().isoformat()
 
