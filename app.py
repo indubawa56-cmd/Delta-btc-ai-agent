@@ -666,8 +666,7 @@ def auto_tick():
 
             if price_usd <= 0:
                 raise ValueError("Invalid BTC price")
-
-                        price = price_usd * get_usd_inr()
+            price = price_usd * get_usd_inr()
 
             candles_5m = get_candles("5m")
             candles_15m = get_candles("15m")
