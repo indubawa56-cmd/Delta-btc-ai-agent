@@ -451,7 +451,11 @@ PAPER = {
     "btc": 0.0,
     "trades": []
 }
-
+AUTO = {
+    "enabled": False,
+    "last_action": "HOLD",
+    "last_check": None
+}
 @app.route("/api/paper", methods=["GET"])
 def paper_status():
     return jsonify(PAPER)
