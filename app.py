@@ -9,7 +9,26 @@ app = Flask(__name__)
 BASE = "https://api.india.delta.exchange"
 
 SYMBOL = "BTCUSD"
+def get_usd_inr():
+    response = requests.get(
+        "https://open.er-api.com/v6/latest/USD",
+        timeout=10
+    )
+    response.raise_for_status()
 
+    data = response.json()
+
+    if data.get("result") != "success":
+        raise ValueError("Exchange rate unavailable")
+
+    return float(data["rates"]["INR"])
+@app.route("/api/exchange-rate")
+def exchange_rate():
+    try:
+        rate = get_usd_inr()
+        return jsonify(usd_inr=rate)
+    except Exception as e:
+        return jsonify(error=str(e)), 502
 HTML = """
 
 <!DOCTYPE html>
@@ -149,10 +168,19 @@ async function loadPaper(){
  try{
   const r=await fetch('/api/paper');
   const d=await r.json();
+  if(!r.ok) throw new Error('Paper data unavailable');
 
-  const fx=Number(document.getElementById('fx').value);
+  const fxResponse=await fetch('/api/exchange-rate');
+  const fxData=await fxResponse.json();
+
+  if(!fxResponse.ok) throw new Error('Exchange rate unavailable');
+
+  const fx=Number(fxData.usd_inr);
+
   const m=await fetch('/api/market');
   const market=await m.json();
+
+  if(!m.ok) throw new Error('Market data unavailable');
 
   const price=Number(market.price)*fx;
   const total=Number(d.cash)+Number(d.btc)*price;
@@ -183,15 +211,27 @@ async function loadPaper(){
 async function trade(side){
  try{
   const qty=Number(document.getElementById('qty').value);
-  const fx=Number(document.getElementById('fx').value);
 
-  if(qty<=0 || fx<=0){
-   alert('Enter valid quantity and exchange rate');
+  if(qty<=0){
+   alert('Enter valid BTC quantity');
    return;
   }
 
+  const fxResponse=await fetch('/api/exchange-rate');
+  const fxData=await fxResponse.json();
+
+  if(!fxResponse.ok){
+   throw new Error('Exchange rate unavailable');
+  }
+
+  const fx=Number(fxData.usd_inr);
+
   const m=await fetch('/api/market');
   const market=await m.json();
+
+  if(!m.ok){
+   throw new Error('Market data unavailable');
+  }
 
   const price=Number(market.price)*fx;
 
