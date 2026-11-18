@@ -111,7 +111,118 @@ loadData();
 setInterval(loadData, 30000);
 
 </script>
+<div class="card">
+<h2>💰 Paper Trading Dashboard</h2>
 
+<p>Starting Balance: ₹5,000</p>
+
+<p>USD to INR Rate:
+<input id="fx" type="number" value="90">
+</p>
+
+<h3>Available Cash</h3>
+<h2 id="cash">Loading...</h2>
+
+<h3>BTC Holdings</h3>
+<h2 id="btc">0</h2>
+
+<h3>Portfolio Value</h3>
+<h2 id="total">Loading...</h2>
+
+<h3>Profit / Loss</h3>
+<h2 id="pnl">₹0</h2>
+
+<input id="qty" type="number"
+placeholder="BTC Quantity" step="0.000001">
+
+<br><br>
+
+<button onclick="trade('buy')">BUY BTC</button>
+<button onclick="trade('sell')">SELL BTC</button>
+
+<h3>Trade History</h3>
+<div id="history"></div>
+</div>
+
+<script>
+async function loadPaper(){
+ try{
+  const r=await fetch('/api/paper');
+  const d=await r.json();
+
+  const fx=Number(document.getElementById('fx').value);
+  const m=await fetch('/api/market');
+  const market=await m.json();
+
+  const price=Number(market.price)*fx;
+  const total=Number(d.cash)+Number(d.btc)*price;
+  const pnl=total-5000;
+
+  document.getElementById('cash').innerText=
+  '₹'+d.cash.toFixed(2);
+
+  document.getElementById('btc').innerText=
+  d.btc.toFixed(8);
+
+  document.getElementById('total').innerText=
+  '₹'+total.toFixed(2);
+
+  document.getElementById('pnl').innerText=
+  '₹'+pnl.toFixed(2);
+
+  document.getElementById('history').innerHTML=
+  d.trades.map(t=>
+  `<p>${t.side.toUpperCase()} | ${t.quantity} BTC | ₹${t.price.toFixed(2)}</p>`
+  ).join('');
+
+ }catch(e){
+  console.log(e);
+ }
+}
+
+async function trade(side){
+ try{
+  const qty=Number(document.getElementById('qty').value);
+  const fx=Number(document.getElementById('fx').value);
+
+  if(qty<=0 || fx<=0){
+   alert('Enter valid quantity and exchange rate');
+   return;
+  }
+
+  const m=await fetch('/api/market');
+  const market=await m.json();
+
+  const price=Number(market.price)*fx;
+
+  const r=await fetch('/api/paper/trade',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({
+    side:side,
+    price:price,
+    quantity:qty
+   })
+  });
+
+  const d=await r.json();
+
+  if(!r.ok){
+   alert(d.error);
+   return;
+  }
+
+  alert('Paper Trade Successful!');
+  loadPaper();
+
+ }catch(e){
+  alert('Trading error: '+e.message);
+ }
+}
+
+loadPaper();
+setInterval(loadPaper,30000);
+</script>
 </body>
 
 </html>
