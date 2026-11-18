@@ -200,6 +200,43 @@ def get_trend(candles):
         return "Bearish"
 
     return "Neutral"
+def get_macd_data(candles):
+    closes = [float(c["close"]) for c in candles]
+
+    if len(closes) < 35:
+        return {"status": "Insufficient Data"}
+
+    macd_values = []
+
+    for i in range(25, len(closes)):
+        macd = (
+            ema(closes[:i+1], 12)
+            - ema(closes[:i+1], 26)
+        )
+        macd_values.append(macd)
+
+    signal_values = [
+        ema(macd_values[:i+1], 9)
+        for i in range(len(macd_values))
+    ]
+
+    macd_now = macd_values[-1]
+    signal_now = signal_values[-1]
+    histogram = macd_now - signal_now
+
+    if macd_now > signal_now:
+        status = "Bullish"
+    elif macd_now < signal_now:
+        status = "Bearish"
+    else:
+        status = "Neutral"
+
+    return {
+        "macd": round(macd_now, 4),
+        "signal": round(signal_now, 4),
+        "histogram": round(histogram, 4),
+        "status": status
+    }
 @app.route("/")
 
 def home():
@@ -229,15 +266,19 @@ def market():
         if price is None:
 
             raise ValueError("Price unavailable")
-
         trends = {}
+        macd = {}
+        for tf in ["5m", "15m", "1h"]: 
+            candles = get_candles(tf)
+            trends[tf] = get_trend(candles)
 
-        for tf in ["5m", "15m", "1h"]:
+            macd[tf] = get_macd_data(candles)
 
-            trends[tf] = get_trend(get_candles(tf))
-
-        return jsonify(price=price, trends=trends)
-
+        return jsonify(
+            price=price,
+            trends=trends,
+            macd=macd
+        ) 
     except Exception as e:
 
         return jsonify(error=str(e)), 502
