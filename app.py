@@ -3,7 +3,8 @@ from flask import Flask, jsonify, render_template_string, request
 import requests
 
 import time
-
+import threading
+from datetime import datetime
 app = Flask(__name__)
 
 BASE = "https://api.india.delta.exchange"
@@ -162,7 +163,10 @@ placeholder="BTC Quantity" step="0.000001">
 <h3>Trade History</h3>
 <div id="history"></div>
 </div>
-
+<h3>Auto Paper Trading</h3>
+<p id="autoStatus">Auto Trading: OFF</p>
+<button onclick="toggleAuto(true)">START AUTO</button>
+<button onclick="toggleAuto(false)">STOP AUTO</button>
 <script>
 async function loadPaper(){
  try{
@@ -259,7 +263,69 @@ async function trade(side){
   alert('Trading error: '+e.message);
  }
 }
+let autoTimer = null;
+let autoBusy = false;
 
+async function runAutoTick() {
+    if (autoBusy) return;
+
+    autoBusy = true;
+
+    try {
+        const r = await fetch('/api/auto/tick', {
+            method: 'POST'
+        });
+
+        const d = await r.json();
+
+        document.getElementById('autoStatus').innerText =
+            'Auto Trading: ' + d.action +
+            (d.error ? ' | ' + d.error : '');
+
+        if (r.ok) {
+            await loadPaper();
+        }
+
+    } catch (e) {
+        document.getElementById('autoStatus').innerText =
+            'Auto Error: ' + e.message;
+    } finally {
+        autoBusy = false;
+    }
+}
+
+async function toggleAuto(enabled) {
+    try {
+        const r = await fetch('/api/auto', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({enabled: enabled})
+        });
+
+        if (!r.ok) throw new Error('Auto setting failed');
+
+        if (autoTimer) {
+            clearInterval(autoTimer);
+            autoTimer = null;
+        }
+
+        if (enabled) {
+            document.getElementById('autoStatus').innerText =
+                'Auto Trading: ON';
+
+            await runAutoTick();
+
+            autoTimer = setInterval(runAutoTick, 60000);
+
+        } else {
+            document.getElementById('autoStatus').innerText =
+                'Auto Trading: OFF';
+        }
+
+    } catch (e) {
+        alert('Auto Trading Error: ' + e.message);
+    }
+}
 loadPaper();
 setInterval(loadPaper,30000);
 </script>
@@ -445,17 +511,19 @@ def market():
 
         return jsonify(error=str(e)), 502
 # PAPER TRADING SYSTEM
-
 PAPER = {
     "cash": 5000.0,
     "btc": 0.0,
+    "entry_price": 0.0,
+    "stop_loss": 0.0,
     "trades": []
 }
+
 AUTO = {
     "enabled": False,
     "last_action": "HOLD",
     "last_check": None
-} 
+}
 @app.route("/api/auto", methods=["GET", "POST"])
 def auto_control():
     if request.method == "POST":
@@ -470,54 +538,189 @@ def auto_control():
     return jsonify(AUTO)
 @app.route("/api/paper", methods=["GET"])
 def paper_status():
-    return jsonify(PAPER)
-
-
+    with PAPER_LOCK:
+        return jsonify(PAPER)
 @app.route("/api/paper/trade", methods=["POST"])
 def paper_trade():
-
     data = request.get_json(silent=True) or {}
-
     side = data.get("side")
-    price = float(data.get("price", 0))
-    quantity = float(data.get("quantity", 0))
+
+    try:
+        price = float(data.get("price", 0))
+        quantity = float(data.get("quantity", 0))
+    except (TypeError, ValueError):
+        return jsonify(error="Invalid price or quantity"), 400
+
+    if side not in ("buy", "sell"):
+        return jsonify(error="Invalid trade type"), 400
 
     if price <= 0 or quantity <= 0:
         return jsonify(error="Invalid price or quantity"), 400
 
-    if side == "buy":
+    with PAPER_LOCK:
+        if side == "buy":
+            cost = price * quantity
 
-        cost = price * quantity
+            if PAPER["btc"] > 0:
+                return jsonify(error="Position already open"), 400
 
-        if cost > PAPER["cash"]:
-            return jsonify(error="Insufficient balance"), 400
+            if cost > 500:
+                return jsonify(error="Maximum trade allocation is ₹500"), 400
 
-        PAPER["cash"] -= cost
-        PAPER["btc"] += quantity
+            if cost > PAPER["cash"]:
+                return jsonify(error="Insufficient balance"), 400
 
-    elif side == "sell":
+            PAPER["cash"] -= cost
+            PAPER["btc"] += quantity
+            PAPER["entry_price"] = price
+            PAPER["stop_loss"] = price * 0.90
 
-        if quantity > PAPER["btc"]:
-            return jsonify(error="Insufficient BTC"), 400
+        else:
+            if quantity > PAPER["btc"]:
+                return jsonify(error="Insufficient BTC"), 400
 
-        PAPER["cash"] += price * quantity
-        PAPER["btc"] -= quantity
+            PAPER["cash"] += price * quantity
+            PAPER["btc"] -= quantity
 
-    else:
-        return jsonify(error="Invalid trade type"), 400
+            if PAPER["btc"] == 0:
+                PAPER["entry_price"] = 0.0
+                PAPER["stop_loss"] = 0.0
 
-    PAPER["trades"].append({
-        "side": side,
-        "price": price,
-        "quantity": quantity
-    })
+        PAPER["trades"].append({
+            "side": side,
+            "price": price,
+            "quantity": quantity
+        })
 
-    return jsonify(
-        success=True,
-        cash=PAPER["cash"],
-        btc=PAPER["btc"],
-        trades=PAPER["trades"]
-    )
+        return jsonify(
+            success=True,
+            cash=PAPER["cash"],
+            btc=PAPER["btc"],
+            entry_price=PAPER["entry_price"],
+            stop_loss=PAPER["stop_loss"],
+            trades=PAPER["trades"]
+        )
+
+
+  # AUTOMATIC PAPER TRADING ENGINE
+
+AUTO_LOCK = threading.Lock()
+PAPER_LOCK = threading.Lock()
+@app.route("/api/auto/tick", methods=["POST"])
+def auto_tick():
+
+    if not AUTO["enabled"]:
+        return jsonify(action="HOLD", message="Auto Trading is OFF")
+
+    with AUTO_LOCK:
+        try:
+            response = requests.get(
+                BASE + "/v2/tickers/" + SYMBOL,
+                timeout=15
+            )
+            response.raise_for_status()
+
+            ticker_data = response.json()["result"]
+
+            if isinstance(ticker_data, list):
+                ticker_data = ticker_data[0]
+
+            price_usd = float(
+                ticker_data.get("close")
+                or ticker_data.get("mark_price")
+                or 0
+            )
+
+            if price_usd <= 0:
+                raise ValueError("Invalid BTC price")
+
+            price = price_usd * get_usd_inr()
+
+            candles_5m = get_candles("5m")
+            candles_15m = get_candles("15m")
+
+            trend_5m = get_trend(candles_5m)
+            trend_15m = get_trend(candles_15m)
+
+            action = "HOLD"
+
+            with PAPER_LOCK:
+
+                if PAPER["btc"] > 0 and price <= PAPER["stop_loss"]:
+                    action = "SELL"
+
+                elif (
+                    trend_5m == "Bearish"
+                    and trend_15m == "Bearish"
+                    and PAPER["btc"] > 0
+                ):
+                    action = "SELL"
+
+                elif (
+                    trend_5m == "Bullish"
+                    and trend_15m == "Bullish"
+                    and PAPER["btc"] == 0
+                ):
+                    action = "BUY"
+
+                if action == "BUY":
+                    cost = min(500.0, PAPER["cash"])
+
+                    if cost > 0:
+                        quantity = cost / price
+
+                        PAPER["cash"] -= cost
+                        PAPER["btc"] += quantity
+                        PAPER["entry_price"] = price
+                        PAPER["stop_loss"] = price * 0.90
+
+                        PAPER["trades"].append({
+                            "side": "buy",
+                            "price": price,
+                            "quantity": quantity
+                        })
+                    else:
+                        action = "HOLD"
+
+                elif action == "SELL":
+                    quantity = PAPER["btc"]
+
+                    if quantity > 0:
+                        PAPER["cash"] += price * quantity
+                        PAPER["btc"] = 0.0
+                        PAPER["entry_price"] = 0.0
+                        PAPER["stop_loss"] = 0.0
+
+                        PAPER["trades"].append({
+                            "side": "sell",
+                            "price": price,
+                            "quantity": quantity
+                        })
+
+                cash = PAPER["cash"]
+                btc = PAPER["btc"]
+
+            AUTO["last_action"] = action
+            AUTO["last_check"] = datetime.now().isoformat()
+
+            return jsonify(
+                success=True,
+                action=action,
+                trend_5m=trend_5m,
+                trend_15m=trend_15m,
+                price_inr=price,
+                cash=cash,
+                btc=btc
+            )
+
+        except Exception as e:
+            AUTO["last_action"] = "HOLD"
+
+            return jsonify(
+                success=False,
+                action="HOLD",
+                error=str(e)
+            ), 502
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=10000)
