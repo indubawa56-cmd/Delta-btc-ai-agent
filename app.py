@@ -200,6 +200,17 @@ def get_trend(candles):
         return "Bearish"
 
     return "Neutral"
+def ema(values, period):
+    if not values:
+        return 0.0
+
+    multiplier = 2 / (period + 1)
+    result = float(values[0])
+
+    for value in values[1:]:
+        result = (float(value) * multiplier) + (result * (1 - multiplier))
+
+    return result
 def get_macd_data(candles):
     closes = [float(c["close"]) for c in candles]
 
