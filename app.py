@@ -455,7 +455,19 @@ AUTO = {
     "enabled": False,
     "last_action": "HOLD",
     "last_check": None
-}
+} 
+@app.route("/api/auto", methods=["GET", "POST"])
+def auto_control():
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+        enabled = data.get("enabled")
+
+        if not isinstance(enabled, bool):
+            return jsonify(error="Invalid setting"), 400
+
+        AUTO["enabled"] = enabled
+
+    return jsonify(AUTO)
 @app.route("/api/paper", methods=["GET"])
 def paper_status():
     return jsonify(PAPER)
