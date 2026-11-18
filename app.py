@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template_string
+from flask import Flask, jsonify, render_template_string, request
 
 import requests
 
@@ -293,7 +293,64 @@ def market():
     except Exception as e:
 
         return jsonify(error=str(e)), 502
+# PAPER TRADING SYSTEM
 
+PAPER = {
+    "cash": 5000.0,
+    "btc": 0.0,
+    "trades": []
+}
+
+@app.route("/api/paper", methods=["GET"])
+def paper_status():
+    return jsonify(PAPER)
+
+
+@app.route("/api/paper/trade", methods=["POST"])
+def paper_trade():
+
+    data = request.get_json(silent=True) or {}
+
+    side = data.get("side")
+    price = float(data.get("price", 0))
+    quantity = float(data.get("quantity", 0))
+
+    if price <= 0 or quantity <= 0:
+        return jsonify(error="Invalid price or quantity"), 400
+
+    if side == "buy":
+
+        cost = price * quantity
+
+        if cost > PAPER["cash"]:
+            return jsonify(error="Insufficient balance"), 400
+
+        PAPER["cash"] -= cost
+        PAPER["btc"] += quantity
+
+    elif side == "sell":
+
+        if quantity > PAPER["btc"]:
+            return jsonify(error="Insufficient BTC"), 400
+
+        PAPER["cash"] += price * quantity
+        PAPER["btc"] -= quantity
+
+    else:
+        return jsonify(error="Invalid trade type"), 400
+
+    PAPER["trades"].append({
+        "side": side,
+        "price": price,
+        "quantity": quantity
+    })
+
+    return jsonify(
+        success=True,
+        cash=PAPER["cash"],
+        btc=PAPER["btc"],
+        trades=PAPER["trades"]
+    )
 if __name__ == "__main__":
 
     app.run(host="0.0.0.0", port=10000)
